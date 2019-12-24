@@ -1,0 +1,336 @@
+# SMART SAFE
+# SFSU FALL 2019
+# ENGR 697
+
+# USAGE
+# python pi_face_recognition.py --cascade haarcascade_frontalface_default.xml --encodings encodings.pickle
+#!/usr/bin/python3
+
+# Importing libraries
+
+                          # Tkinter libraries
+from tkinter import *     # * imports all the classes, attributes, and methods of Tkinter into current workspace
+import tkinter.font       # font that will be used to display texts on screen
+import RPi.GPIO as GPIO   # Enabling GPIO ports on Raspberry Pi
+
+# Face recognition libraries
+
+# imutils is a library of function to make basic image procesing much easier with OpenCV and both Python 2.7 & 3
+import imutils
+from imutils.video import VideoStream # Function to create our videostream using the PiCamera
+from imutils.video import FPS         # Used to get a threaded webcam for extra performance and FPS
+
+import face_recognition  # Allows us to recognize and manipulate faces.  Detector built with deep learning.
+                         # we will be using this to encode the faces we find in an image into a 128-dimension array
+
+import argparse  # Used to pull command line arguments into our program
+import pickle    # Pickling in Python is serializing and de-serializing a python object
+import time      # Used to keep track of time since system bootup
+
+import cv2       # OpenCV, used to quickly detect faces in our input frame using cascade classifier
+
+import numpy as np              # used with OpenCV todo array manipulation
+from PIL import Image, ImageTk  # Python Imaging Library, used to format images for GUI
+
+# construct the argument parser and parse the arguments
+
+ap = argparse.ArgumentParser()   # Creates an object to parse
+ap.add_argument("-c", "--cascade", required=True, help = "path to where the face cascade resides")
+ap.add_argument("-e", "--encodings", required=True, help="path to serialized db of facial encodings")
+args = vars(ap.parse_args())
+
+# load the known faces and embeddings along with OpenCV's Haar cascade for face detection
+print("[INFO] loading encodings + face detector...")
+data = pickle.loads(open(args["encodings"], "rb").read()) # serializes stored encodings with know face data
+detector = cv2.CascadeClassifier(args["cascade"]) # loads our classifier to detect faces
+
+# Window appearance
+
+root = Tk()                           # Creates the root window but can be given another name ; BEGINNING of skeleton
+root.attributes("-fullscreen", True)  # Makes the window become fullscreen on the LCD
+root.bind("<Escape>", lambda event: root.attributes("-fullscreen", False))  # Esc key will exit the fullscreen
+root.title('SMART SAFE') # Window name
+root.geometry('320x480') # Dimensions of window
+
+myFont = tkinter.font.Font(family = 'arial', size = 11, weight = 'bold')    # Setting all text displayed on the main menu
+myFont1 = tkinter.font.Font(family = 'arial', size = 12, weight = 'bold')   # Setting all text displayed on the dial pad label
+myFont2 = tkinter.font.Font(family = 'arial', size = 34, weight = 'bold')   # Setting all text displayed on the access granted buttons
+myFont3 = tkinter.font.Font(family = 'arial', size = 12, weight = 'bold')   # Setting all text displayed on the dial pad entry
+myFont4 = tkinter.font.Font(family = 'arial', size = 11, weight = 'bold')   # Setting all text displayed on the dial pad numbers
+myFont5 = tkinter.font.Font(family = 'arial', size = 13, weight = 'bold')   # Setting all text displayed on the face recognition screen
+
+pin = StringVar() # Setting pin inputs as strings
+operator = ""
+count = 0
+
+# Board configuration
+
+GPIO.setmode(GPIO.BCM)     # General Purspose Input/Output (GPIO)
+GPIO.setwarnings(False)    # Ignore warnings
+GPIO.setup(26, GPIO.OUT)   # Setting GPIO 26 as an output
+GPIO_state = True
+
+# Functions/Next Stage Windows
+
+def access_granted():      # Once pin pad and face recognition stages have passed
+    print("Access Granted")
+    global operator        # Allows the operator variable to used anywhere within the script
+    operator = ""          # Resets the operator variable
+    pin.set("")            # Resets the entry pin
+    
+    def opensafe():        # Unlocking and Locking executions
+        global GPIO_state  # Allows the operator variable to used anywhere within the script
+        if GPIO_state == True:
+            GPIO.output(26, GPIO_state)
+            GPIO_state = False
+            buto["text"] = "LOCK"
+            buto["bg"] = "red2"
+            buto["activebackground"] = "red2"
+            buto["highlightbackground"] = "red2"
+        else:
+            GPIO.output(26, GPIO_state)
+            GPIO_state = True
+            buto["text"] = "UNLOCK"
+            buto["bg"] = "green2"
+            buto["activebackground"] = "green2"
+            buto["highlightbackground"] = "green2"
+
+    def exitbutton():      # Exits master window
+        root.destroy()
+
+    top2 = Toplevel()      # New stage window
+    top2.attributes("-fullscreen", True)
+    top2.bind("<Escape>", lambda event: top2.attributes("-fullscreen", False))  
+    top2.geometry('320x480')
+    top2.configure(cursor='none')
+  
+    # Initial buttons displayed
+    
+    buto = Button(top2, text="UNLOCK", command=opensafe, bg="green2", activebackground="green2", highlightbackground="green2", font=myFont2, height = 5, width = 12)
+    buto.grid(row = 0, sticky = NSEW)
+
+    bute = Button(top2, text="EXIT", command=exitbutton, bg="gray94", activebackground="gray94", highlightbackground="gray94", font=myFont2, height = 4, width = 12)
+    bute.grid(row = 1, sticky = NSEW)
+
+    # This label is used for scaling
+   
+    lab1 = Label(top2,text="SFSU ENGR 697",height=2)
+    lab1.grid(row=2, sticky=S)
+
+def face_verification():   # Once pin pad stage has passed
+    top1 = Toplevel()      # New stage window
+    top1.attributes("-fullscreen", True)
+    top1.bind("<Escape>", lambda event: top1.attributes("-fullscreen", False))  
+    top1.geometry('320x480')
+    top1.configure(cursor='none')
+
+    # Initiating user flags
+
+    global aPin            # Andres flag
+    global kPin            # Karnveer flag
+    global dPin            # Dovido flag
+    
+    aPin = False
+    kPin = False
+    dPin = False 
+
+    # Widgets shown on window
+
+    lab1 = Label(top1, text = "")           # Space holder widget
+    lab1.grid(row=0,column=1)
+
+    lab2 = Label(top1, text = "", width=1)  # Space holder widget
+    lab2.grid(row=1,column=0)
+
+    imageFrame = Frame(top1, width=318, height=280)  # Frame in which camera feed will be displayed
+    imageFrame.grid(row=1, column=1)
+
+    if pin.get() == "1234":                 # If user is Andres display "Scanning for Andres"
+        lab3 = Label(top1, text = "\n\nFace ID\n\nScanning for Andres...\n", font=myFont5, fg="red2")
+        lab3.grid(row=2,column=1)
+        aPin = True                         # Set Andres flag to high
+    elif pin.get() == "5555":               # If user is Karnveer display "Scanning for Karnveer"
+        lab3 = Label(top1, text = "\n\nFace ID\n\nScanning for Karnveer...\n", font=myFont5, fg="red2")
+        lab3.grid(row=2,column=1)
+        kPin = True                         # Set Karnveer flag to high
+    elif pin.get() == "6789":               # If user is Dovido display "Scanning for Dovido"
+        lab3 = Label(top1, text = "\n\nFace ID\n\nScanning for Dovido...\n", font=myFont5, fg="red2")
+        lab3.grid(row=2,column=1)
+        dPin = True                         # Set Dovido flag to high
+
+    #Capture video frames
+
+    lmain = Label(imageFrame)
+    lmain.grid(row=1, column=1)
+    cap = VideoStream(src=0).start() # Start Videostream and save image in "cap"
+    count = 0 # this count is incremented when the correct face is detected
+    
+    def show_frame():   # Facial Recognition operations
+        
+        # setting user Pin flags and count as global
+        
+        global aPin
+        global kPin
+        global dPin
+        global count
+        
+        checkName = False # checkName is toggled True if correct face detected for long enough time
+        entryFlag = False # entryFlag is toggled true when correct face detected and increments count
+        
+        frame = cap.read()                       # store Videostream image with cv2.read() method
+        frame = cv2.flip(frame, -1)              # flip display
+        frame = imutils.resize(frame, width=500) # Reduces frame size
+        
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # convert input from BGR to grayscale (for face DETECTION)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)   # convert input from BGR to RGB (for face RECOGNITION)
+
+        # detect faces in the grayscale frame using cv2
+        rects = detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30), flags=cv2.CASCADE_SCALE_IMAGE)
+
+        # OpenCV returns bounding box coordinates in (x, y, w, h) order
+        # we need them in (top, right, bottom, left) order, so we need to do a bit of reordering
+        boxes = [(y, x + w, y + h, x) for (x, y, w, h) in rects]
+
+        # us face_recognition to compute the facial embeddings for each face detecting in Videostream
+        encodings = face_recognition.face_encodings(rgb, boxes)
+        names = []
+
+        # loop over the facial embeddings calculated from Videostream and compare to known facial embedding values
+        for encoding in encodings:
+            
+            # attempt to match each face in the input image to our known encodings
+            matches = face_recognition.compare_faces(data["encodings"], encoding)
+            name = "Unknown"
+
+            # check to see if we have found a match
+            if True in matches:
+                # find the indexes of all matched faces then initialize a
+                # dictionary to count the total number of times each face
+                # was matched
+                matchedIdxs = [i for (i, b) in enumerate(matches) if b]
+                counts = {}
+
+                # loop over the matched indexes and maintain a count for
+                # each recognized face
+                for i in matchedIdxs:
+                    name = data["names"][i]
+                    counts[name] = counts.get(name, 0) + 1
+
+                # determine the recognized face with the largest number
+                # of votes (note: in the event of an unlikely tie Python
+                # will select first entry in the dictionary)
+                name = max(counts, key=counts.get)
+            
+            # update the list of names
+            names.append(name)
+
+        # loop over the recognized faces
+        for ((top, right, bottom, left), name) in zip(boxes, names):
+            # draw the predicted face name on the image
+            
+            cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2) # draw box on frame
+            y = top - 15 if top - 15 > 15 else top + 15
+            cv2.putText(frame, name, (left, y), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2) # put name on frame
+            
+            # If known name detected toggle entryFlag True
+            if ((name == 'andres') and aPin):
+                entryFlag = True
+            elif ((name == 'karnveer') and kPin):
+                entryFlag = True
+            elif ((name == 'dovido') and dPin):
+                entryFlag = True
+
+        cv2image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) # convert grayscale image array with box & name into color array
+
+        img = Image.fromarray(cv2image) # converting cv2 image array into image file
+
+        # Scaling image to fit in GUI on LCD display
+        img = img.resize((290,280))
+        imgtk = ImageTk.PhotoImage(image=img)
+        lmain.imgtk = imgtk
+        lmain.configure(image=imgtk)
+
+        # Logic to see if correct face is detected in frame for long enough
+        if (entryFlag):
+            if(count < 5):
+                count = count + 1
+                print(count) 
+            else:
+                checkName = True # once count reaches 5 toggle checkName
+        
+        if (not checkName):
+            lmain.after(5, show_frame) # if checkName still false, recursively call show_frame to keep videoStream running
+        else:
+            access_granted() # once checkName True, launch access_granted() page
+
+    show_frame()
+
+def clickbutton(number): # When a number button is pressed on the pin pad
+    global operator
+    operator = operator+str(number) # Number is turned into a string and added to the sequence
+    pin.set(operator)               # Displays numbers pressed on the entry widget
+
+def clearbutton():       # When the clear button is pressed on the pin pad
+    global operator
+    operator = ""        # Resets the operator variable
+    pin.set("")          # Resets the entry pin
+
+#def clearlabel():        # Clears "NO SUCH USER" alert
+#    lab2 = Label(top, text="").grid(row=2, column=0, columnspan=4, sticky=NSEW)
+
+def pin_pad():            # Displaying the pin pad
+    top = Toplevel()      # New stage window
+    top.attributes("-fullscreen", True)
+    top.bind("<Escape>", lambda event: top.attributes("-fullscreen", False))
+    top.geometry('320x480')
+    top.configure(cursor='none')
+    top.configure(background = "gray94")
+
+    def no_such_user():  # Checks if the pin entered is addressed to a user
+        if pin.get() == "1234":   # Andres's pin
+            face_verification()   # Proceed to face recognition stage
+        elif pin.get() == "5555": # Karnveer's pin
+            face_verification()   # Proceed to face recognition stage
+        elif pin.get() == "6789": # Dovido's pin
+            face_verification()   # Proceed to face recognition stage
+        else:
+            print("NO SUCH USER")        # Display "NO SUCH USER" alert on pin pad
+            lab2 = Label(top, text="NO SUCH USER", fg="red2", bg="gray94").grid(row=2, column=1)
+            top.after(2000,clear_label)  # Clear alert after 2 seconds
+    
+    def clear_label():            # Clears "NO SUCH USER" alert
+        lab2 = Label(top, text="", bg="gray94").grid(row=2, column=0, columnspan=4, sticky=NSEW)
+    
+    # Widgets used to create the pin pad
+    
+    lab1 = Label(top, text="ENTER PIN", font=myFont1, bg="gray94").grid(row=0, column=1, sticky=NSEW)
+    ent1 = Entry(top, state='readonly', textvariable=pin, readonlybackground="white", justify='center', show="•", font=myFont3, width=30).grid(row=1, column=0, columnspan=3)
+    lab2 = Label(top, bg="gray94").grid(row=2)
+
+    but1 = Button(top, text='1', width=9, height=4, font=myFont4,  command=lambda:clickbutton(1), bg="gray94", activebackground="gray94").grid(row=3, column=0, sticky=NSEW)
+    but2 = Button(top, text='2', width=9, height=4, font=myFont4,  command=lambda:clickbutton(2), bg="gray94", activebackground="gray94").grid(row=3, column=1, sticky=NSEW)
+    but3 = Button(top, text='3', width=9, height=4, font=myFont4,  command=lambda:clickbutton(3), bg="gray94", activebackground="gray94").grid(row=3, column=2, sticky=NSEW)
+
+    but4 = Button(top, text='4', width=9, height=4, font=myFont4,  command=lambda:clickbutton(4), bg="gray94", activebackground="gray94").grid(row=4, column=0, sticky=NSEW)
+    but5 = Button(top, text='5', width=9, height=4, font=myFont4,  command=lambda:clickbutton(5), bg="gray94", activebackground="gray94").grid(row=4, column=1, sticky=NSEW)
+    but6 = Button(top, text='6', width=9, height=4, font=myFont4,  command=lambda:clickbutton(6), bg="gray94", activebackground="gray94").grid(row=4, column=2, sticky=NSEW)
+
+    but7 = Button(top, text='7', width=9, height=4, font=myFont4,  command=lambda:clickbutton(7), bg="gray94", activebackground="gray94").grid(row=5, column=0, sticky=NSEW)
+    but8 = Button(top, text='8', width=9, height=4, font=myFont4,  command=lambda:clickbutton(8), bg="gray94", activebackground="gray94").grid(row=5, column=1, sticky=NSEW)
+    but9 = Button(top, text='9', width=9, height=4, font=myFont4,  command=lambda:clickbutton(9), bg="gray94", activebackground="gray94").grid(row=5, column=2, sticky=NSEW)
+
+    but10 = Button(top, text='*', width=9, height=4, font=myFont4,  command=lambda:clickbutton('*'), bg="gray94", activebackground="gray94").grid(row=6, column=0, sticky=NSEW)
+    but11 = Button(top, text='0', width=9, height=4, font=myFont4,  command=lambda:clickbutton(0), bg="gray94", activebackground="gray94").grid(row=6, column=1, sticky=NSEW)
+    but12 = Button(top, text='#', width=9, height=4, font=myFont4,  command=lambda:clickbutton('#'), bg="gray94", activebackground="gray94").grid(row=6, column=2, sticky=NSEW)
+
+    butc = Button(top, text='CLEAR', width=10, height= 3, font=myFont4, command=clearbutton, bg="gray94", activebackground="gray94").grid(row=7, column=0, sticky=NSEW)
+    bute = Button(top, text='ENTER', width=10, height= 3, font=myFont4,  command=no_such_user, bg="gray94", activebackground="gray94").grid(row=7, column=1, sticky=NSEW)
+    butq = Button(top, text='QUIT', width=10, height= 3, font=myFont4,  command=top.destroy, bg="gray94", activebackground="gray94").grid(row=7, column=2, sticky=NSEW)
+
+# Widgets displayed on the main menu (master window)
+
+welcome = Button(root, text="WELCOME TO SMART SAFE\n \n\nTOUCH SCREEN TO CONTINUE\n\n> > >\n", command=pin_pad, bg="gray94", activebackground="gray94", font=myFont, height=26, width=37)
+welcome.grid(sticky=NSEW)         # Scales the button to fit the entire cell
+welcome.configure(cursor='none')  # Hides cursor when hovering over the screen
+
+root.mainloop()                   # Keeps the root window visible ; END of skeleton
